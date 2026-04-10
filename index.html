@@ -1,0 +1,168 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Планировщик задач</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="top-bar">
+      <div class="top-bar__brand">
+        <p class="eyebrow">Task Planner</p>
+        <h1 class="app-title">Неделя в фокусе</h1>
+      </div>
+
+      <div class="top-bar__actions">
+        <button class="action-button action-button--ghost" id="clear-completed-button" type="button">
+          Очистить выполненные
+        </button>
+        <button class="action-button" id="calendar-open-button" type="button">
+          Календарь
+        </button>
+      </div>
+    </header>
+
+    <section class="week-strip" aria-labelledby="week-range-label">
+      <div class="week-strip__header">
+        <div>
+          <p class="eyebrow">Week View</p>
+          <h2 class="week-strip__title" id="week-range-label">Текущая неделя</h2>
+        </div>
+
+        <div class="week-strip__nav">
+          <button class="week-nav-button" id="week-prev-button" type="button" aria-label="Предыдущая неделя">
+            &#8249;
+          </button>
+          <button class="week-nav-button" id="week-next-button" type="button" aria-label="Следующая неделя">
+            &#8250;
+          </button>
+        </div>
+      </div>
+
+      <div class="week-grid" id="week-grid"></div>
+    </section>
+
+    <main class="workspace">
+      <section class="day-stage" aria-labelledby="selected-day-title">
+        <div class="day-stage__header">
+          <div>
+            <p class="eyebrow">Opened Day</p>
+            <h2 id="selected-day-title">Сегодня</h2>
+            <p class="day-stage__meta" id="selected-day-meta">Откройте день недели, чтобы увидеть его задачи.</p>
+          </div>
+        </div>
+
+        <form class="task-composer" id="task-form" hidden>
+          <div class="task-composer__header">
+            <div>
+              <p class="eyebrow">Create Task</p>
+              <h3 class="task-composer__title">Новая задача</h3>
+              <p class="task-composer__date" id="composer-date-label">Для выбранного дня</p>
+            </div>
+            <button class="task-composer__close" id="task-form-cancel" type="button">
+              Скрыть
+            </button>
+          </div>
+
+          <div class="task-composer__field">
+            <label for="task-title">Текст задачи</label>
+            <input id="task-title" name="task-title" type="text" placeholder="Например, созвон с командой" required>
+          </div>
+
+          <div class="task-composer__row">
+            <div class="task-composer__field">
+              <label for="task-priority">Приоритет</label>
+              <select id="task-priority" name="task-priority">
+                <option value="critical">Критичный</option>
+                <option value="important">Важный</option>
+                <option value="normal" selected>Обычный</option>
+              </select>
+            </div>
+
+            <div class="task-composer__field">
+              <label for="task-deadline">Финальный дедлайн</label>
+              <input id="task-deadline" name="task-deadline" type="date">
+            </div>
+          </div>
+
+          <div class="task-composer__row task-composer__row--compact">
+            <div class="task-composer__field">
+              <label for="task-repeat">Повторение</label>
+              <select id="task-repeat" name="task-repeat">
+                <option value="none" selected>Нет</option>
+                <option value="daily">Ежедневно</option>
+                <option value="weekly">Еженедельно</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="task-composer__field">
+            <label for="task-comment">Комментарий</label>
+            <textarea id="task-comment" name="task-comment" rows="4" placeholder="Детали, ссылки, уточнения"></textarea>
+          </div>
+
+          <div class="task-composer__actions">
+            <button class="action-button action-button--primary" type="submit">
+              Сохранить задачу
+            </button>
+          </div>
+        </form>
+
+        <section class="task-list" id="task-list" aria-label="Список задач открытого дня"></section>
+      </section>
+
+      <aside class="next-day-stage" aria-labelledby="next-day-title">
+        <div>
+          <p class="eyebrow">Next Day</p>
+          <h2 id="next-day-title">Следующий день</h2>
+          <p class="next-day-stage__meta" id="next-day-meta">Задачи следующего дня появятся здесь автоматически.</p>
+        </div>
+        <section class="next-day-stage__list" id="next-day-list" aria-label="Список задач следующего дня"></section>
+      </aside>
+    </main>
+  </div>
+
+  <div class="calendar-modal" id="calendar-modal" hidden>
+    <div class="calendar-modal__backdrop" data-calendar-close></div>
+    <section class="calendar-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="calendar-modal-title">
+      <div class="calendar-modal__header">
+        <div>
+          <p class="eyebrow">Calendar</p>
+          <h2 id="calendar-modal-title">Выбор даты</h2>
+        </div>
+        <button class="calendar-modal__close" type="button" data-calendar-close>
+          Закрыть
+        </button>
+      </div>
+
+      <div class="calendar-toolbar">
+        <button class="calendar-toolbar__nav" id="calendar-prev-button" type="button" aria-label="Предыдущий месяц">
+          &#8249;
+        </button>
+        <p class="calendar-toolbar__label" id="calendar-month-label">--</p>
+        <button class="calendar-toolbar__nav" id="calendar-next-button" type="button" aria-label="Следующий месяц">
+          &#8250;
+        </button>
+      </div>
+
+      <div class="calendar-weekdays" aria-hidden="true">
+        <span>Пн</span>
+        <span>Вт</span>
+        <span>Ср</span>
+        <span>Чт</span>
+        <span>Пт</span>
+        <span>Сб</span>
+        <span>Вс</span>
+      </div>
+
+      <div class="calendar-grid" id="calendar-grid"></div>
+    </section>
+  </div>
+
+  <div class="toast-container" id="toast-container" aria-live="polite" aria-atomic="true"></div>
+
+  <script src="script.js"></script>
+</body>
+</html>
