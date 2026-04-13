@@ -3,6 +3,9 @@
   const DATA_VERSION = 1;
   const TOAST_DURATION = 5000;
   const SERIES_LOOKAHEAD_DAYS = 120;
+  const SUPABASE_TABLE = "planner_state";
+  const SUPABASE_ROW_ID = "main";
+  const REMOTE_STORAGE_TIMEOUT_MS = 8000;
   const PRIORITIES = ["critical", "important", "normal"];
   const REPEAT_OPTIONS = ["none", "daily", "weekly"];
   const PRIORITY_LABELS = {
@@ -34,6 +37,9 @@
   const taskRepeatInput = document.getElementById("task-repeat");
   const taskCommentInput = document.getElementById("task-comment");
   const taskList = document.getElementById("task-list");
+  const exportDataButton = document.getElementById("export-data-button");
+  const importDataButton = document.getElementById("import-data-button");
+  const importFileInput = document.getElementById("import-file-input");
   const clearCompletedButton = document.getElementById("clear-completed-button");
   const calendarOpenButton = document.getElementById("calendar-open-button");
   const calendarModal = document.getElementById("calendar-modal");
@@ -62,6 +68,9 @@
     !taskRepeatInput ||
     !taskCommentInput ||
     !taskList ||
+    !exportDataButton ||
+    !importDataButton ||
+    !importFileInput ||
     !clearCompletedButton ||
     !calendarOpenButton ||
     !calendarModal ||
@@ -89,29 +98,93 @@
     }
   };
 
-  let data = loadData();
-  carryOverOverdueTasks();
-  materializeRecurringTasks();
-  saveData();
+  const supabaseConfig = getSupabaseConfig();
+  let data = createDefaultData();
+  let remoteSaveQueue = Promise.resolve();
+  let remoteStorageEnabled = false;
+  let isSyncInProgress = false;
 
-  weekGrid.addEventListener("click", handleWeekGridClick);
-  weekPrevButton.addEventListener("click", () => shiftWeek(-7));
-  weekNextButton.addEventListener("click", () => shiftWeek(7));
-  taskForm.addEventListener("submit", handleTaskSubmit);
-  taskFormCancel.addEventListener("click", () => closeComposer(true));
-  taskList.addEventListener("change", handleTaskListChange);
-  taskList.addEventListener("click", handleTaskListClick);
-  taskList.addEventListener("focusin", handleTaskListFocusIn);
-  taskList.addEventListener("focusout", handleTaskListFocusOut);
-  taskList.addEventListener("keydown", handleTaskListKeyDown);
-  clearCompletedButton.addEventListener("click", handleClearCompleted);
-  calendarOpenButton.addEventListener("click", () => {
-    openCalendar({ mode: "navigate", initialDate: state.selectedDate });
-  });
-  calendarPrevButton.addEventListener("click", () => updateCalendarMonth(-1));
-  calendarNextButton.addEventListener("click", () => updateCalendarMonth(1));
-  calendarModal.addEventListener("click", handleCalendarClick);
-  document.addEventListener("keydown", handleDocumentKeyDown);
+  initializeApp();
+
+  function bindEventListeners() {
+    weekGrid.addEventListener("click", handleWeekGridClick);
+    weekPrevButton.addEventListener("click", () => shiftWeek(-7));
+    weekNextButton.addEventListener("click", () => shiftWeek(7));
+    taskForm.addEventListener("submit", handleTaskSubmit);
+    taskFormCancel.addEventListener("click", () => closeComposer(true));
+    taskList.addEventListener("change", handleTaskListChange);
+    taskList.addEventListener("click", handleTaskListClick);
+    taskList.addEventListener("focusin", handleTaskListFocusIn);
+    taskList.addEventListener("focusout", handleTaskListFocusOut);
+    taskList.addEventListener("keydown", handleTaskListKeyDown);
+    exportDataButton.addEventListener("click", handleExportDataClick);
+    importDataButton.addEventListener("click", handleImportDataClick);
+    importFileInput.addEventListener("change", handleImportFileChange);
+    clearCompletedButton.addEventListener("click", handleClearCompleted);
+    calendarOpenButton.addEventListener("click", () => {
+      openCalendar({ mode: "navigate", initialDate: state.selectedDate });
+    });
+    calendarPrevButton.addEventListener("click", () => updateCalendarMonth(-1));
+    calendarNextButton.addEventListener("click", () => updateCalendarMonth(1));
+    calendarModal.addEventListener("click", handleCalendarClick);
+    document.addEventListener("keydown", handleDocumentKeyDown);
+    window.addEventListener("focus", handleWindowFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+  }
+
+  async function initializeApp() {
+    bindEventListeners();
+
+    try {
+      data = await loadData();
+      carryOverOverdueTasks();
+      materializeRecurringTasks();
+      await saveData({ awaitRemote: true });
+    } catch (error) {
+      console.error("Не удалось инициализировать хранилище задач", error);
+      data = createDefaultData();
+    }
+
+    closeComposer(true);
+    renderApp();
+  }
+
+  function getSupabaseConfig() {
+    const config = window.__PLANNER_CONFIG ?? {};
+    const supabaseUrlRaw = typeof config.supabaseUrl === "string" ? config.supabaseUrl.trim() : "";
+    const supabaseAnonKey = typeof config.supabaseAnonKey === "string" ? config.supabaseAnonKey.trim() : "";
+    const supabaseUrl = supabaseUrlRaw.replace(/\/+$/, "");
+
+    return {
+      supabaseUrl,
+      supabaseAnonKey,
+      enabled: Boolean(supabaseUrl && supabaseAnonKey)
+    };
+  }
+
+  function getSupabaseRestUrl(query = "") {
+    const baseUrl = `${supabaseConfig.supabaseUrl}/rest/v1/${SUPABASE_TABLE}`;
+    return query ? `${baseUrl}${query}` : baseUrl;
+  }
+
+  function getSupabaseHeaders(extraHeaders = {}) {
+    return {
+      apikey: supabaseConfig.supabaseAnonKey,
+      Authorization: `Bearer ${supabaseConfig.supabaseAnonKey}`,
+      ...extraHeaders
+    };
+  }
+
+  async function fetchWithTimeout(url, options = {}) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), REMOTE_STORAGE_TIMEOUT_MS);
+
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  }
 
   function startOfDay(date) {
     const normalizedDate = new Date(date);
@@ -218,7 +291,17 @@
     };
   }
 
-  function loadData() {
+  function getSnapshotTimestamp(snapshot) {
+    const tasks = Array.isArray(snapshot?.tasks) ? snapshot.tasks : [];
+
+    return tasks.reduce((latestTimestamp, task) => {
+      const candidateIso = typeof task.updatedAt === "string" ? task.updatedAt : task.createdAt;
+      const candidateTimestamp = Number.isFinite(Date.parse(candidateIso)) ? Date.parse(candidateIso) : 0;
+      return candidateTimestamp > latestTimestamp ? candidateTimestamp : latestTimestamp;
+    }, 0);
+  }
+
+  function loadLocalData() {
     try {
       const savedData = window.localStorage.getItem(STORAGE_KEY);
       if (!savedData) {
@@ -232,11 +315,174 @@
     }
   }
 
-  function saveData() {
+  function saveLocalData(snapshot) {
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
     } catch (error) {
       console.error("Не удалось сохранить данные в LocalStorage", error);
+    }
+  }
+
+  async function loadRemoteData() {
+    if (!supabaseConfig.enabled) {
+      throw new Error("Supabase не настроен");
+    }
+
+    const response = await fetchWithTimeout(
+      getSupabaseRestUrl(`?id=eq.${encodeURIComponent(SUPABASE_ROW_ID)}&select=payload`),
+      {
+        method: "GET",
+        cache: "no-store",
+        headers: getSupabaseHeaders({
+          Accept: "application/json"
+        })
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Supabase вернул статус ${response.status}`);
+    }
+
+    const rows = await response.json();
+    const payload = Array.isArray(rows) && rows.length > 0 ? rows[0]?.payload : null;
+
+    return normalizeData(payload ?? createDefaultData());
+  }
+
+  async function saveRemoteData(snapshot) {
+    if (!supabaseConfig.enabled) {
+      throw new Error("Supabase не настроен");
+    }
+
+    const response = await fetchWithTimeout(
+      getSupabaseRestUrl("?on_conflict=id"),
+      {
+        method: "POST",
+        headers: getSupabaseHeaders({
+          "Content-Type": "application/json",
+          Prefer: "resolution=merge-duplicates,return=minimal"
+        }),
+        body: JSON.stringify([
+          {
+            id: SUPABASE_ROW_ID,
+            payload: snapshot
+          }
+        ])
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Supabase вернул статус ${response.status}`);
+    }
+  }
+
+  async function loadData() {
+    const localData = loadLocalData();
+
+    if (!supabaseConfig.enabled) {
+      remoteStorageEnabled = false;
+      return localData;
+    }
+
+    try {
+      const remoteData = await loadRemoteData();
+      const hasRemoteTasks = remoteData.tasks.length > 0;
+      const hasLocalTasks = localData.tasks.length > 0;
+
+      remoteStorageEnabled = true;
+
+      if (!hasRemoteTasks && hasLocalTasks) {
+        await saveRemoteData(localData);
+        saveLocalData(localData);
+        return localData;
+      }
+
+      if (hasRemoteTasks && hasLocalTasks) {
+        const localTimestamp = getSnapshotTimestamp(localData);
+        const remoteTimestamp = getSnapshotTimestamp(remoteData);
+
+        if (localTimestamp > remoteTimestamp) {
+          await saveRemoteData(localData);
+          saveLocalData(localData);
+          return localData;
+        }
+      }
+
+      saveLocalData(remoteData);
+      return remoteData;
+    } catch (error) {
+      remoteStorageEnabled = false;
+      console.warn("Удаленное хранилище Supabase недоступно, используем LocalStorage", error);
+      return localData;
+    }
+  }
+
+  async function saveData(options = {}) {
+    const { awaitRemote = false } = options;
+    const normalizedSnapshot = normalizeData(data);
+    data = normalizedSnapshot;
+    saveLocalData(normalizedSnapshot);
+
+    if (!supabaseConfig.enabled) {
+      return;
+    }
+
+    const remoteSnapshot = JSON.parse(JSON.stringify(normalizedSnapshot));
+
+    remoteSaveQueue = remoteSaveQueue
+      .catch(() => undefined)
+      .then(async () => {
+        await saveRemoteData(remoteSnapshot);
+        remoteStorageEnabled = true;
+      })
+      .catch((error) => {
+        remoteStorageEnabled = false;
+        console.warn("Не удалось сохранить задачи в удаленное хранилище Supabase", error);
+      });
+
+    if (awaitRemote) {
+      await remoteSaveQueue;
+    }
+  }
+
+  async function syncDataFromRemote() {
+    if (!supabaseConfig.enabled || isSyncInProgress || pendingDeletions.size > 0) {
+      return;
+    }
+
+    isSyncInProgress = true;
+
+    try {
+      const remoteData = await loadRemoteData();
+      const currentSnapshot = JSON.stringify(normalizeData(data));
+      const remoteSnapshot = JSON.stringify(remoteData);
+
+      remoteStorageEnabled = true;
+
+      if (currentSnapshot === remoteSnapshot) {
+        return;
+      }
+
+      data = remoteData;
+      carryOverOverdueTasks();
+      materializeRecurringTasks();
+      await saveData({ awaitRemote: true });
+      renderApp();
+    } catch (error) {
+      remoteStorageEnabled = false;
+      console.warn("Не удалось синхронизировать задачи с Supabase", error);
+    } finally {
+      isSyncInProgress = false;
+    }
+  }
+
+  function handleWindowFocus() {
+    syncDataFromRemote();
+  }
+
+  function handleVisibilityChange() {
+    if (document.visibilityState === "visible") {
+      syncDataFromRemote();
     }
   }
 
@@ -484,6 +730,100 @@
     }
 
     composerDateLabel.textContent = `Для ${formatFullDate(state.composerDate).toLowerCase()}`;
+  }
+
+  function createExportPayload() {
+    return {
+      format: "planner-data-export-v1",
+      exportedAt: new Date().toISOString(),
+      data: normalizeData(data)
+    };
+  }
+
+  function triggerJsonDownload(filename, payload) {
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const objectUrl = window.URL.createObjectURL(blob);
+    const tempLink = document.createElement("a");
+
+    tempLink.href = objectUrl;
+    tempLink.download = filename;
+    document.body.append(tempLink);
+    tempLink.click();
+    tempLink.remove();
+    window.URL.revokeObjectURL(objectUrl);
+  }
+
+  function handleExportDataClick() {
+    const todayLabel = toStorageDate(startOfDay(new Date()));
+    const filename = `planner-export-${todayLabel}.json`;
+    triggerJsonDownload(filename, createExportPayload());
+  }
+
+  function handleImportDataClick() {
+    importFileInput.value = "";
+    importFileInput.click();
+  }
+
+  function extractImportData(rawPayload) {
+    if (rawPayload && typeof rawPayload === "object" && rawPayload.format === "planner-data-export-v1") {
+      return normalizeData(rawPayload.data ?? createDefaultData());
+    }
+
+    return normalizeData(rawPayload);
+  }
+
+  function clearPendingDeletions() {
+    for (const pendingDeletion of pendingDeletions.values()) {
+      window.clearTimeout(pendingDeletion.timeoutId);
+      pendingDeletion.toastElement.remove();
+    }
+
+    pendingDeletions.clear();
+  }
+
+  async function handleImportFileChange(event) {
+    const importedFile = event.target.files?.[0];
+    if (!importedFile) {
+      return;
+    }
+
+    try {
+      const fileContent = await importedFile.text();
+      const parsedPayload = JSON.parse(fileContent);
+      const importedData = extractImportData(parsedPayload);
+      const replaceCurrentTasks = window.confirm(
+        "Заменить текущие задачи импортированными?\nНажмите ОК, чтобы заменить.\nНажмите Отмена, чтобы объединить списки."
+      );
+
+      clearPendingDeletions();
+
+      if (replaceCurrentTasks) {
+        data = importedData;
+      } else {
+        const mergedTasksById = new Map(data.tasks.map((task) => [task.id, cloneTask(task)]));
+        importedData.tasks.forEach((task) => {
+          mergedTasksById.set(task.id, cloneTask(task));
+        });
+
+        data = normalizeData({
+          version: DATA_VERSION,
+          tasks: [...mergedTasksById.values()]
+        });
+      }
+
+      carryOverOverdueTasks();
+      materializeRecurringTasks();
+      await saveData({ awaitRemote: true });
+      closeComposer(true);
+      renderApp();
+
+      window.alert(`Импорт завершен. Всего задач: ${data.tasks.length}.`);
+    } catch (error) {
+      console.error("Не удалось импортировать файл задач", error);
+      window.alert("Не удалось импортировать файл. Проверьте, что выбран корректный JSON-экспорт планировщика.");
+    } finally {
+      importFileInput.value = "";
+    }
   }
 
   function handleWeekGridClick(event) {
@@ -1114,6 +1454,18 @@
     renderCalendar();
   }
 
-  closeComposer(true);
-  renderApp();
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
