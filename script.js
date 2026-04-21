@@ -35,6 +35,7 @@
   const taskSubmitButton = taskForm?.querySelector("button[type='submit']");
   const taskTitleInput = document.getElementById("task-title");
   const taskPriorityInput = document.getElementById("task-priority");
+  const taskWorkDateInput = document.getElementById("task-work-date");
   const taskDeadlineInput = document.getElementById("task-deadline");
   const taskRepeatInput = document.getElementById("task-repeat");
   const taskCommentInput = document.getElementById("task-comment");
@@ -68,6 +69,7 @@
     !taskSubmitButton ||
     !taskTitleInput ||
     !taskPriorityInput ||
+    !taskWorkDateInput ||
     !taskDeadlineInput ||
     !taskRepeatInput ||
     !taskCommentInput ||
@@ -117,8 +119,10 @@
     weekNextButton.addEventListener("click", () => shiftWeek(7));
     taskForm.addEventListener("submit", handleTaskSubmit);
     taskFormCancel.addEventListener("click", () => closeComposer(true));
+    taskWorkDateInput.addEventListener("change", handleComposerDateChange);
     taskList.addEventListener("change", handleTaskListChange);
     taskList.addEventListener("click", handleTaskListClick);
+    nextDayList.addEventListener("click", handleTaskListClick);
     exportDataButton.addEventListener("click", handleExportDataClick);
     importDataButton.addEventListener("click", handleImportDataClick);
     importFileInput.addEventListener("change", handleImportFileChange);
@@ -766,6 +770,7 @@
     taskForm.reset();
     taskPriorityInput.value = "normal";
     taskRepeatInput.value = "none";
+    taskWorkDateInput.value = toStorageDate(state.selectedDate);
     taskDeadlineInput.value = "";
     taskCommentInput.value = "";
   }
@@ -783,6 +788,7 @@
     state.weekStartDate = startOfWeek(state.selectedDate);
     state.composerDate = state.selectedDate;
     resetComposerFormFields();
+    taskWorkDateInput.value = toStorageDate(state.selectedDate);
     taskForm.hidden = false;
     updateComposerDateLabel();
     updateComposerMode();
@@ -800,6 +806,7 @@
     state.composerDate = parseStorageDate(task.workDate);
     taskTitleInput.value = task.text;
     taskPriorityInput.value = normalizePriority(task.priority);
+    taskWorkDateInput.value = task.workDate;
     taskDeadlineInput.value = task.finalDeadline;
     taskRepeatInput.value = normalizeRepeat(task.repeat);
     taskCommentInput.value = task.comment;
@@ -829,6 +836,17 @@
     }
 
     composerDateLabel.textContent = `Для ${formatFullDate(state.composerDate).toLowerCase()}`;
+  }
+
+  function handleComposerDateChange() {
+    if (!taskWorkDateInput.value) {
+      state.composerDate = null;
+      updateComposerDateLabel();
+      return;
+    }
+
+    state.composerDate = parseStorageDate(taskWorkDateInput.value);
+    updateComposerDateLabel();
   }
 
   function createExportPayload() {
@@ -951,7 +969,12 @@
 
     const repeat = normalizeRepeat(taskRepeatInput.value);
     const now = new Date().toISOString();
-    const workDate = toStorageDate(state.composerDate ?? state.selectedDate);
+    const workDate = taskWorkDateInput.value || toStorageDate(state.composerDate ?? state.selectedDate);
+    if (!workDate) {
+      taskWorkDateInput.focus();
+      return;
+    }
+
     const editingTask = state.editingTaskId ? getTaskById(state.editingTaskId) : null;
 
     if (editingTask) {
@@ -1446,7 +1469,10 @@
             <h3 class="next-task-item__title">${escapeHtml(task.text)}</h3>
             <p class="next-task-item__meta">${escapeHtml(metaParts.join(" • "))}</p>
           </div>
-          <span class="task-chip task-chip--priority-${task.priority}">${PRIORITY_LABELS[task.priority]}</span>
+          <div class="next-task-item__side">
+            <span class="task-chip task-chip--priority-${task.priority}">${PRIORITY_LABELS[task.priority]}</span>
+            <button class="task-edit-button" type="button" data-task-edit-id="${task.id}">Редактировать</button>
+          </div>
         </article>
       `;
     }).join("");

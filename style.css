@@ -843,6 +843,12 @@ textarea {
   margin: 0;
 }
 
+.next-task-item__side {
+  display: grid;
+  justify-items: end;
+  gap: 0.4rem;
+}
+
 .next-task-item__title {
   font-size: 0.98rem;
   line-height: 1.4;
@@ -926,5 +932,9 @@ textarea {
 @media (max-width: 760px) {
   .next-task-item {
     grid-template-columns: 1fr;
+  }
+
+  .next-task-item__side {
+    justify-items: stretch;
   }
 }
