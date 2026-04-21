@@ -31,6 +31,8 @@
   const composerDateLabel = document.getElementById("composer-date-label");
   const taskForm = document.getElementById("task-form");
   const taskFormCancel = document.getElementById("task-form-cancel");
+  const taskComposerTitle = taskForm?.querySelector(".task-composer__title");
+  const taskSubmitButton = taskForm?.querySelector("button[type='submit']");
   const taskTitleInput = document.getElementById("task-title");
   const taskPriorityInput = document.getElementById("task-priority");
   const taskDeadlineInput = document.getElementById("task-deadline");
@@ -62,6 +64,8 @@
     !composerDateLabel ||
     !taskForm ||
     !taskFormCancel ||
+    !taskComposerTitle ||
+    !taskSubmitButton ||
     !taskTitleInput ||
     !taskPriorityInput ||
     !taskDeadlineInput ||
@@ -90,6 +94,7 @@
     weekStartDate: startOfWeek(today),
     selectedDate: today,
     composerDate: null,
+    editingTaskId: null,
     calendar: {
       isOpen: false,
       mode: "navigate",
@@ -114,9 +119,6 @@
     taskFormCancel.addEventListener("click", () => closeComposer(true));
     taskList.addEventListener("change", handleTaskListChange);
     taskList.addEventListener("click", handleTaskListClick);
-    taskList.addEventListener("focusin", handleTaskListFocusIn);
-    taskList.addEventListener("focusout", handleTaskListFocusOut);
-    taskList.addEventListener("keydown", handleTaskListKeyDown);
     exportDataButton.addEventListener("click", handleExportDataClick);
     importDataButton.addEventListener("click", handleImportDataClick);
     importFileInput.addEventListener("change", handleImportFileChange);
@@ -487,17 +489,15 @@
   }
 
   function carryOverOverdueTasks() {
-    const todayStorageDate = toStorageDate(today);
     const now = new Date().toISOString();
 
     data.tasks.forEach((task) => {
-      if (task.isDone || !task.workDate || task.workDate >= todayStorageDate) {
+      if (!task.isOverdue && !task.overdueFromDate) {
         return;
       }
 
-      task.overdueFromDate = task.overdueFromDate || task.workDate;
-      task.workDate = todayStorageDate;
-      task.isOverdue = true;
+      task.isOverdue = false;
+      task.overdueFromDate = "";
       task.updatedAt = now;
     });
   }
@@ -524,15 +524,75 @@
     return false;
   }
 
+  function getTaskOverdueStartDate(task) {
+    if (typeof task.finalDeadline === "string" && task.finalDeadline) {
+      return task.finalDeadline;
+    }
+
+    if (typeof task.workDate === "string" && task.workDate) {
+      return task.workDate;
+    }
+
+    return "";
+  }
+
+  function isTaskOverdueForDate(task, date) {
+    if (task.isDone) {
+      return false;
+    }
+
+    const storageDate = typeof date === "string" ? date : toStorageDate(startOfDay(date));
+    const overdueStartDate = getTaskOverdueStartDate(task);
+    if (!overdueStartDate) {
+      return false;
+    }
+
+    return overdueStartDate < storageDate;
+  }
+
+  function toTaskView(task, date) {
+    const storageDate = typeof date === "string" ? date : toStorageDate(startOfDay(date));
+    const isOverdue = isTaskOverdueForDate(task, storageDate);
+    const overdueStartDate = getTaskOverdueStartDate(task);
+
+    return {
+      ...task,
+      isOverdue,
+      overdueFromDate: isOverdue ? overdueStartDate : ""
+    };
+  }
+
   function getTasksForDate(date) {
     const storageDate = toStorageDate(date);
-    return data.tasks.filter((task) => task.workDate === storageDate && !isTaskPendingDeletion(task.id));
+    return data.tasks
+      .filter((task) => !isTaskPendingDeletion(task.id))
+      .filter((task) => {
+        if (!task.workDate) {
+          return false;
+        }
+
+        return task.workDate === storageDate || isTaskOverdueForDate(task, storageDate);
+      })
+      .map((task) => toTaskView(task, storageDate));
   }
 
   function sortTasks(tasks) {
     return [...tasks].sort((firstTask, secondTask) => {
+      if (firstTask.isOverdue !== secondTask.isOverdue) {
+        return Number(secondTask.isOverdue) - Number(firstTask.isOverdue);
+      }
+
       if (firstTask.isDone !== secondTask.isDone) {
         return Number(firstTask.isDone) - Number(secondTask.isDone);
+      }
+
+      if (firstTask.isOverdue && secondTask.isOverdue) {
+        const firstOverdueDate = firstTask.overdueFromDate || firstTask.workDate;
+        const secondOverdueDate = secondTask.overdueFromDate || secondTask.workDate;
+        const overdueDiff = firstOverdueDate.localeCompare(secondOverdueDate);
+        if (overdueDiff !== 0) {
+          return overdueDiff;
+        }
       }
 
       const priorityDiff = PRIORITIES.indexOf(normalizePriority(firstTask.priority)) - PRIORITIES.indexOf(normalizePriority(secondTask.priority));
@@ -702,25 +762,64 @@
     renderApp();
   }
 
+  function resetComposerFormFields() {
+    taskForm.reset();
+    taskPriorityInput.value = "normal";
+    taskRepeatInput.value = "none";
+    taskDeadlineInput.value = "";
+    taskCommentInput.value = "";
+  }
+
+  function updateComposerMode() {
+    const isEditMode = Boolean(state.editingTaskId);
+    taskComposerTitle.textContent = isEditMode ? "Редактирование задачи" : "Новая задача";
+    taskSubmitButton.textContent = isEditMode ? "Сохранить изменения" : "Сохранить задачу";
+    taskFormCancel.textContent = isEditMode ? "Отмена" : "Скрыть";
+  }
+
   function openComposerForDate(date) {
+    state.editingTaskId = null;
     state.selectedDate = startOfDay(date);
     state.weekStartDate = startOfWeek(state.selectedDate);
     state.composerDate = state.selectedDate;
+    resetComposerFormFields();
     taskForm.hidden = false;
     updateComposerDateLabel();
+    updateComposerMode();
+    renderApp();
+    taskTitleInput.focus();
+  }
+
+  function openTaskEditor(taskId) {
+    const task = getTaskById(taskId);
+    if (!task) {
+      return;
+    }
+
+    state.editingTaskId = task.id;
+    state.composerDate = parseStorageDate(task.workDate);
+    taskTitleInput.value = task.text;
+    taskPriorityInput.value = normalizePriority(task.priority);
+    taskDeadlineInput.value = task.finalDeadline;
+    taskRepeatInput.value = normalizeRepeat(task.repeat);
+    taskCommentInput.value = task.comment;
+    taskForm.hidden = false;
+    updateComposerDateLabel();
+    updateComposerMode();
     renderApp();
     taskTitleInput.focus();
   }
 
   function closeComposer(resetForm) {
     state.composerDate = null;
+    state.editingTaskId = null;
     taskForm.hidden = true;
 
     if (resetForm) {
-      taskForm.reset();
-      taskPriorityInput.value = "normal";
-      taskRepeatInput.value = "none";
+      resetComposerFormFields();
     }
+
+    updateComposerMode();
   }
 
   function updateComposerDateLabel() {
@@ -851,12 +950,47 @@
     }
 
     const repeat = normalizeRepeat(taskRepeatInput.value);
+    const now = new Date().toISOString();
+    const workDate = toStorageDate(state.composerDate ?? state.selectedDate);
+    const editingTask = state.editingTaskId ? getTaskById(state.editingTaskId) : null;
+
+    if (editingTask) {
+      const previousRepeat = normalizeRepeat(editingTask.repeat);
+
+      editingTask.text = text;
+      editingTask.priority = normalizePriority(taskPriorityInput.value);
+      editingTask.repeat = repeat;
+      editingTask.workDate = workDate;
+      editingTask.finalDeadline = taskDeadlineInput.value;
+      editingTask.comment = taskCommentInput.value.trim();
+      editingTask.isOverdue = false;
+      editingTask.overdueFromDate = "";
+      editingTask.updatedAt = now;
+
+      if (repeat === "none") {
+        editingTask.seriesId = "";
+        editingTask.seriesGeneratedUntil = "";
+      } else if (!editingTask.seriesId || previousRepeat === "none") {
+        editingTask.seriesId = generateId("series");
+        editingTask.seriesGeneratedUntil = "";
+      }
+
+      if (repeat !== "none") {
+        ensureSeriesCoverage(editingTask);
+      }
+
+      saveData();
+      closeComposer(true);
+      renderApp();
+      return;
+    }
+
     const task = createTask({
       text,
       priority: taskPriorityInput.value,
       repeat,
       seriesId: repeat === "none" ? "" : generateId("series"),
-      workDate: toStorageDate(state.composerDate ?? state.selectedDate),
+      workDate,
       finalDeadline: taskDeadlineInput.value,
       comment: taskCommentInput.value,
       isOverdue: false,
@@ -898,6 +1032,12 @@
   }
 
   function handleTaskListClick(event) {
+    const editButton = event.target.closest("[data-task-edit-id]");
+    if (editButton) {
+      openTaskEditor(editButton.dataset.taskEditId);
+      return;
+    }
+
     const moveButton = event.target.closest("[data-task-move-id]");
     if (moveButton) {
       const task = getTaskById(moveButton.dataset.taskMoveId);
@@ -934,85 +1074,6 @@
     }
 
     scheduleDeletion([task.id], "Задача удалена");
-  }
-
-  function handleTaskListFocusIn(event) {
-    const editableTitle = event.target.closest(".task-item__title[contenteditable='true']");
-    if (!editableTitle) {
-      return;
-    }
-
-    editableTitle.dataset.originalText = editableTitle.textContent.trim();
-  }
-
-  function handleTaskListFocusOut(event) {
-    const editableTitle = event.target.closest(".task-item__title[contenteditable='true']");
-    if (!editableTitle) {
-      return;
-    }
-
-    commitTaskTitleEdit(editableTitle);
-  }
-
-  function handleTaskListKeyDown(event) {
-    const editableTitle = event.target.closest(".task-item__title[contenteditable='true']");
-    if (!editableTitle) {
-      return;
-    }
-
-    if (event.key === "Enter") {
-      event.preventDefault();
-      editableTitle.blur();
-      return;
-    }
-
-    if (event.key === "Escape") {
-      event.preventDefault();
-      editableTitle.textContent = editableTitle.dataset.originalText ?? editableTitle.textContent;
-      editableTitle.blur();
-    }
-  }
-
-  function commitTaskTitleEdit(editableTitle) {
-    const task = getTaskById(editableTitle.dataset.taskId);
-    if (!task) {
-      return;
-    }
-
-    const nextText = editableTitle.textContent.replace(/\s+/g, " ").trim();
-    const originalText = editableTitle.dataset.originalText ?? task.text;
-    delete editableTitle.dataset.originalText;
-
-    if (!nextText || nextText === originalText || nextText === task.text) {
-      editableTitle.textContent = task.text;
-      return;
-    }
-
-    const now = new Date().toISOString();
-
-    if (task.repeat !== "none" && task.seriesId) {
-      const scope = askSeriesScope("Изменить только эту задачу или всю серию?");
-      if (!scope) {
-        editableTitle.textContent = task.text;
-        return;
-      }
-
-      if (scope === "series") {
-        getTasksBySeriesId(task.seriesId).forEach((seriesTask) => {
-          seriesTask.text = nextText;
-          seriesTask.updatedAt = now;
-        });
-      } else {
-        task.text = nextText;
-        task.updatedAt = now;
-      }
-    } else {
-      task.text = nextText;
-      task.updatedAt = now;
-    }
-
-    saveData();
-    renderApp();
   }
 
   function scheduleDeletion(taskIds, message) {
@@ -1348,6 +1409,7 @@
     selectedDayTitle.textContent = formatFullDate(state.selectedDate);
     selectedDayMeta.textContent = formatDayMeta(state.selectedDate);
     updateComposerDateLabel();
+    updateComposerMode();
     clearCompletedButton.disabled = !getTasksForDate(state.selectedDate).some((task) => task.isDone);
   }
 
@@ -1368,7 +1430,7 @@
     nextDayList.innerHTML = tasks.map((task) => {
       const metaParts = [];
       if (task.isOverdue && task.overdueFromDate) {
-        metaParts.push(`Перенесено с ${formatDeadline(task.overdueFromDate)}`);
+        metaParts.push(`Просрочено с ${formatDeadline(task.overdueFromDate)}`);
       }
       if (task.repeat !== "none") {
         metaParts.push(REPEAT_LABELS[task.repeat]);
@@ -1403,7 +1465,7 @@
         ? `<span class="task-chip">${REPEAT_LABELS[task.repeat]}</span>`
         : "";
       const overdueMarkup = task.isOverdue && task.overdueFromDate
-        ? `<p class="task-item__overdue">Перенесено с ${escapeHtml(formatDeadline(task.overdueFromDate))}</p>`
+        ? `<p class="task-item__overdue">Просрочено с ${escapeHtml(formatDeadline(task.overdueFromDate))}</p>`
         : "";
       const commentMarkup = task.comment
         ? `<p class="task-item__comment">${escapeHtml(task.comment)}</p>`
@@ -1415,7 +1477,7 @@
             <input class="task-item__checkbox" type="checkbox" data-task-id="${task.id}" aria-label="Отметить задачу как выполненную" ${task.isDone ? "checked" : ""}>
           </div>
           <div class="task-item__content">
-            <h3 class="task-item__title" contenteditable="true" spellcheck="false" data-task-id="${task.id}">${escapeHtml(task.text)}</h3>
+            <h3 class="task-item__title">${escapeHtml(task.text)}</h3>
             ${overdueMarkup}
             ${commentMarkup}
             <div class="task-item__meta">
@@ -1428,6 +1490,7 @@
           <div class="task-item__side">
             <span class="task-chip">${escapeHtml(formatFullDate(parseStorageDate(task.workDate)))}</span>
             <div class="task-action-row">
+              <button class="task-edit-button" type="button" data-task-edit-id="${task.id}">Редактировать</button>
               <button class="task-move-button" type="button" data-task-move-id="${task.id}">Перенести</button>
               <button class="task-delete-button" type="button" data-task-delete-id="${task.id}">Удалить</button>
             </div>

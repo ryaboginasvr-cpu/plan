@@ -100,6 +100,7 @@ textarea {
 .calendar-modal__close,
 .task-composer__close,
 .week-card__create,
+.task-edit-button,
 .task-move-button,
 .task-delete-button,
 .toast__undo {
@@ -118,6 +119,7 @@ textarea {
 .week-nav-button:hover,
 .calendar-toolbar__nav:hover,
 .week-card__create:hover,
+.task-edit-button:hover,
 .task-move-button:hover,
 .task-delete-button:hover {
   transform: translateY(-1px);
@@ -377,9 +379,11 @@ textarea {
 }
 
 .task-item--overdue {
-  background: linear-gradient(180deg, rgba(255, 248, 247, 0.95) 0%, rgba(255, 241, 239, 0.86) 100%);
-  border-left-color: #e6a29f;
-  box-shadow: inset 0 0 0 1px rgba(232, 162, 160, 0.18);
+  background: linear-gradient(180deg, rgba(255, 239, 239, 0.98) 0%, rgba(255, 229, 229, 0.9) 100%);
+  border-left-color: #d84d4d;
+  box-shadow:
+    inset 0 0 0 2px rgba(216, 77, 77, 0.34),
+    0 10px 20px rgba(174, 43, 43, 0.14);
   animation: overdue-pulse 2.8s ease-in-out infinite;
 }
 
@@ -407,12 +411,11 @@ textarea {
   border-radius: 10px;
   font-size: 1rem;
   line-height: 1.42;
-  outline: none;
 }
 
-.task-item__title[contenteditable="true"]:focus {
-  background: rgba(219, 231, 230, 0.72);
-  box-shadow: inset 0 0 0 1px rgba(74, 84, 96, 0.12);
+.task-item--overdue .task-item__title {
+  color: #8f2020;
+  font-weight: 600;
 }
 
 .task-item--done .task-item__title {
@@ -426,7 +429,8 @@ textarea {
 }
 
 .task-item__overdue {
-  color: #a05f5d;
+  color: #8f2b2b;
+  font-weight: 600;
   font-size: 0.92rem;
 }
 
@@ -479,9 +483,15 @@ textarea {
   gap: 0.45rem;
 }
 
+.task-edit-button,
 .task-move-button,
 .task-delete-button {
   padding: 0.55rem 0.88rem;
+}
+
+.task-edit-button {
+  background: rgba(222, 232, 226, 0.84);
+  color: #2f4a3f;
 }
 
 .task-move-button {
@@ -676,6 +686,7 @@ textarea {
   .week-card,
   .week-card__create,
   .calendar-day,
+  .task-edit-button,
   .task-move-button,
   .task-delete-button {
     transition: none;
@@ -725,6 +736,7 @@ textarea {
 
   .action-button,
   .task-composer__close,
+  .task-edit-button,
   .task-move-button,
   .task-delete-button,
   .toast__undo {
@@ -821,7 +833,9 @@ textarea {
 }
 
 .next-task-item--overdue {
-  background: rgba(255, 242, 241, 0.72);
+  background: rgba(255, 236, 236, 0.86);
+  border-left-color: #d84d4d;
+  box-shadow: inset 0 0 0 1px rgba(216, 77, 77, 0.26);
 }
 
 .next-task-item__title,
