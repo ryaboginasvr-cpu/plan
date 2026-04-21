@@ -2,12 +2,20 @@
   const STORAGE_KEY = "planner-data";
   const DATA_VERSION = 1;
   const TOAST_DURATION = 5000;
+  const INFO_TOAST_DURATION = 2200;
   const SERIES_LOOKAHEAD_DAYS = 120;
   const SUPABASE_TABLE = "planner_state";
   const SUPABASE_ROW_ID = "main";
   const REMOTE_STORAGE_TIMEOUT_MS = 8000;
   const PRIORITIES = ["critical", "important", "normal"];
   const REPEAT_OPTIONS = ["none", "daily", "weekly"];
+  const TASK_FILTERS = ["all", "active", "overdue", "done"];
+  const TASK_FILTER_LABELS = {
+    all: "Все",
+    active: "Активные",
+    overdue: "Просроченные",
+    done: "Выполненные"
+  };
   const PRIORITY_LABELS = {
     critical: "Критичный",
     important: "Важный",
@@ -39,6 +47,7 @@
   const taskDeadlineInput = document.getElementById("task-deadline");
   const taskRepeatInput = document.getElementById("task-repeat");
   const taskCommentInput = document.getElementById("task-comment");
+  const taskFilter = document.getElementById("task-filter");
   const taskList = document.getElementById("task-list");
   const exportDataButton = document.getElementById("export-data-button");
   const importDataButton = document.getElementById("import-data-button");
@@ -73,6 +82,7 @@
     !taskDeadlineInput ||
     !taskRepeatInput ||
     !taskCommentInput ||
+    !taskFilter ||
     !taskList ||
     !exportDataButton ||
     !importDataButton ||
@@ -97,6 +107,7 @@
     selectedDate: today,
     composerDate: null,
     editingTaskId: null,
+    taskFilter: "all",
     calendar: {
       isOpen: false,
       mode: "navigate",
@@ -120,6 +131,7 @@
     taskForm.addEventListener("submit", handleTaskSubmit);
     taskFormCancel.addEventListener("click", () => closeComposer(true));
     taskWorkDateInput.addEventListener("change", handleComposerDateChange);
+    taskFilter.addEventListener("click", handleTaskFilterClick);
     taskList.addEventListener("change", handleTaskListChange);
     taskList.addEventListener("click", handleTaskListClick);
     nextDayList.addEventListener("click", handleTaskListClick);
@@ -244,6 +256,10 @@
 
   function normalizeRepeat(repeat) {
     return REPEAT_OPTIONS.includes(repeat) ? repeat : "none";
+  }
+
+  function normalizeTaskFilter(taskFilterValue) {
+    return TASK_FILTERS.includes(taskFilterValue) ? taskFilterValue : "all";
   }
 
   function createDefaultData() {
@@ -608,6 +624,24 @@
     });
   }
 
+  function getFilteredTasks(tasks, filterValue = state.taskFilter) {
+    const normalizedFilter = normalizeTaskFilter(filterValue);
+
+    if (normalizedFilter === "active") {
+      return tasks.filter((task) => !task.isDone);
+    }
+
+    if (normalizedFilter === "overdue") {
+      return tasks.filter((task) => task.isOverdue && !task.isDone);
+    }
+
+    if (normalizedFilter === "done") {
+      return tasks.filter((task) => task.isDone);
+    }
+
+    return tasks;
+  }
+
   function getNextRecurringDate(task) {
     return addDays(parseStorageDate(task.workDate), task.repeat === "weekly" ? 7 : 1);
   }
@@ -958,6 +992,22 @@
     setSelectedDate(parseStorageDate(card.dataset.dayOpen));
   }
 
+  function handleTaskFilterClick(event) {
+    const filterButton = event.target.closest("[data-task-filter]");
+    if (!filterButton) {
+      return;
+    }
+
+    const nextFilter = normalizeTaskFilter(filterButton.dataset.taskFilter);
+    if (state.taskFilter === nextFilter) {
+      return;
+    }
+
+    state.taskFilter = nextFilter;
+    renderTaskFilter();
+    renderTaskList();
+  }
+
   function handleTaskSubmit(event) {
     event.preventDefault();
 
@@ -1005,6 +1055,7 @@
       saveData();
       closeComposer(true);
       renderApp();
+      showInfoToast("Задача обновлена");
       return;
     }
 
@@ -1136,6 +1187,22 @@
     const undoButton = toastElement.querySelector(".toast__undo");
     undoButton?.addEventListener("click", () => undoDeletion(deletionId));
     return toastElement;
+  }
+
+  function showInfoToast(message, duration = INFO_TOAST_DURATION) {
+    const toastElement = document.createElement("article");
+    toastElement.className = "toast toast--info";
+    toastElement.innerHTML = `
+      <div class="toast__content">
+        <p class="toast__text">${escapeHtml(message)}</p>
+      </div>
+      <div class="toast__progress" style="animation-duration: ${duration}ms;"></div>
+    `;
+
+    toastContainer.prepend(toastElement);
+    window.setTimeout(() => {
+      toastElement.remove();
+    }, duration);
   }
 
   function undoDeletion(deletionId) {
@@ -1433,7 +1500,17 @@
     selectedDayMeta.textContent = formatDayMeta(state.selectedDate);
     updateComposerDateLabel();
     updateComposerMode();
+    renderTaskFilter();
     clearCompletedButton.disabled = !getTasksForDate(state.selectedDate).some((task) => task.isDone);
+  }
+
+  function renderTaskFilter() {
+    const filterButtons = taskFilter.querySelectorAll("[data-task-filter]");
+    filterButtons.forEach((button) => {
+      const isActive = normalizeTaskFilter(button.dataset.taskFilter) === state.taskFilter;
+      button.classList.toggle("is-active", isActive);
+      button.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
   }
 
   function renderNextDayStage() {
@@ -1479,10 +1556,14 @@
   }
 
   function renderTaskList() {
-    const tasks = sortTasks(getTasksForDate(state.selectedDate));
+    const allTasks = sortTasks(getTasksForDate(state.selectedDate));
+    const tasks = getFilteredTasks(allTasks);
 
     if (tasks.length === 0) {
-      taskList.innerHTML = '<p class="task-list__empty">Откройте день и создайте задачу кнопкой "Создать задачу" прямо на карточке этого дня.</p>';
+      const emptyText = state.taskFilter === "all"
+        ? "Откройте день и создайте задачу кнопкой \"Создать задачу\" прямо на карточке этого дня."
+        : `Нет задач в фильтре «${TASK_FILTER_LABELS[state.taskFilter]}».`;
+      taskList.innerHTML = `<p class="task-list__empty">${escapeHtml(emptyText)}</p>`;
       return;
     }
 

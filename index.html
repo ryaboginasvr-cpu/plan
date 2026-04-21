@@ -123,6 +123,21 @@
           </div>
         </form>
 
+        <section class="task-filter" id="task-filter" aria-label="Фильтр задач дня">
+          <button class="task-filter__button is-active" type="button" data-task-filter="all" aria-pressed="true">
+            Все
+          </button>
+          <button class="task-filter__button" type="button" data-task-filter="active" aria-pressed="false">
+            Активные
+          </button>
+          <button class="task-filter__button" type="button" data-task-filter="overdue" aria-pressed="false">
+            Просроченные
+          </button>
+          <button class="task-filter__button" type="button" data-task-filter="done" aria-pressed="false">
+            Выполненные
+          </button>
+        </section>
+
         <section class="task-list" id="task-list" aria-label="Список задач открытого дня"></section>
       </section>
 
